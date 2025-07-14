@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 
 from bleak import BleakClient, BleakScanner
@@ -9,8 +10,11 @@ from openpyxl import Workbook, load_workbook
 # Konfiguration
 DEVICE_ADDRESS = "A4:C1:38:A5:20:BB"  # <- anpassen, falls nötig
 CHAR_UUID = "00002a35-0000-1000-8000-00805f9b34fb"
-EXCEL_FILE = "log.xlsx"
-CONFIG_FILE = "config.json"
+
+# Datenverzeichnis kann per Umgebungsvariable gesetzt werden
+DATA_DIR = os.getenv("DATA_DIR", "/appdata")
+EXCEL_FILE = os.path.join(DATA_DIR, "log.xlsx")
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
 
 def load_config():
@@ -21,6 +25,7 @@ def load_config():
 
 
 def save_config(cfg):
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f)
 
@@ -83,7 +88,8 @@ def parse_measurement(data: bytes):
 
 # Excel-Schreiber
 def write_to_excel(values):
-    path = os.path.join(os.path.dirname(__file__), EXCEL_FILE)
+    os.makedirs(os.path.dirname(EXCEL_FILE), exist_ok=True)
+    path = EXCEL_FILE
     headers = ["Zeitstempel", "Systole", "Diastole", "MAP", "Puls"]
 
     if not os.path.exists(path):
@@ -130,7 +136,54 @@ async def fetch_loop(address):
             raise
 
 
+def pair_with_bluetoothctl(address: str) -> bool:
+    """Pairing über ``bluetoothctl`` mit PIN-/Passkey-Eingabe."""
+    try:
+        import pexpect
+    except ImportError:
+        print("pexpect nicht installiert")
+        return False
+
+    child = pexpect.spawn("bluetoothctl", encoding="utf-8")
+    try:
+        child.expect("#", timeout=5)
+        child.sendline("agent KeyboardOnly")
+        child.sendline("default-agent")
+        child.sendline(f"pair {address}")
+        while True:
+            idx = child.expect([
+                "Enter PIN code:",
+                r"Confirm passkey .*\[y/N\]",  # on-screen confirmation
+                "Pairing successful", "Failed to pair",
+                pexpect.EOF, pexpect.TIMEOUT
+            ], timeout=30)
+            if idx == 0:
+                pin = input("PIN: ")
+                child.sendline(pin)
+            elif idx == 1:
+                child.sendline("yes")
+            elif idx == 2:
+                child.sendline("quit")
+                child.close()
+                return True
+            else:
+                child.sendline("quit")
+                child.close()
+                return False
+    except Exception as e:
+        print(f"bluetoothctl-Fehler: {e}")
+        return False
+
+
 async def pair_device(address: str) -> bool:
+    """Versucht das Gerät zu pairen.
+
+    Unter Linux wird dazu ``bluetoothctl`` verwendet, um eine Code-Eingabe zu
+    ermöglichen. Auf anderen Plattformen erfolgt das Pairing über ``Bleak``.
+    """
+
+    if sys.platform.startswith("linux"):
+        return await asyncio.to_thread(pair_with_bluetoothctl, address)
     try:
         async with BleakClient(address) as client:
             if not client.is_connected:
