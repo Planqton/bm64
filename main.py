@@ -15,6 +15,12 @@ def parse_measurement(data: bytes):
         flags = data[0]
         index = 1
 
+        units_kpa = bool(flags & 0x01)
+        timestamp_present = bool(flags & 0x02)
+        pulse_present = bool(flags & 0x04)
+        user_present = bool(flags & 0x08)
+        status_present = bool(flags & 0x10)
+
         # Pflichtfelder (6 Bytes)
         systolic = int.from_bytes(data[index:index+2], byteorder='little')
         index += 2
@@ -26,8 +32,14 @@ def parse_measurement(data: bytes):
         # Berechne MAP immer selbst
         map_val = int(diastolic + (systolic - diastolic) / 3)
 
-        # Zeitstempel (Bit 0)
-        if flags & 0x01:
+        if units_kpa:
+            # Umrechnung von kPa in mmHg
+            systolic = round(systolic * 7.50062)
+            diastolic = round(diastolic * 7.50062)
+            map_val = round(map_val * 7.50062)
+
+        # Zeitstempel vorhanden?
+        if timestamp_present:
             year = int.from_bytes(data[index:index+2], byteorder='little')
             month = data[index+2]
             day = data[index+3]
@@ -39,19 +51,19 @@ def parse_measurement(data: bytes):
         else:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Puls (Bit 1)
-        if flags & 0x02:
+        # Puls vorhanden?
+        if pulse_present:
             pulse = int.from_bytes(data[index:index+2], byteorder='little')
             index += 2
         else:
             pulse = None
 
-        # User ID (Bit 2) – optional
-        if flags & 0x04:
+        # User ID – optional
+        if user_present:
             index += 1
 
-        # Status (Bit 3) – optional
-        if flags & 0x08:
+        # Status – optional
+        if status_present:
             index += 2
 
         return {
