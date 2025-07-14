@@ -30,13 +30,16 @@ def parse_measurement(data: bytes):
         index += 2
 
         # Berechne MAP immer selbst
-        map_val = int(diastolic + (systolic - diastolic) / 3)
+        map_val = diastolic + (systolic - diastolic) / 3
 
         if units_kpa:
             # Umrechnung von kPa in mmHg
             systolic = round(systolic * 7.50062)
             diastolic = round(diastolic * 7.50062)
-            map_val = round(map_val * 7.50062)
+            map_val = map_val * 7.50062
+
+        # MAP auf zwei Nachkommastellen runden
+        map_val = round(map_val, 2)
 
         # Zeitstempel vorhanden?
         if timestamp_present:
