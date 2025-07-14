@@ -1,8 +1,10 @@
 import asyncio
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
 from datetime import datetime
 import os
 from openpyxl import Workbook, load_workbook
+
+measurement_event = asyncio.Event()
 
 # Konfiguration
 DEVICE_ADDRESS = "A4:C1:38:A5:20:BB"  # <- anpassen, falls nötig
@@ -113,21 +115,41 @@ def handle_notification(sender, data):
     values = parse_measurement(data)
     if values:
         write_to_excel(values)
+        measurement_event.set()
+
+async def log_once(client):
+    measurement_event.clear()
+    print("📡 Warte auf Messdaten (60 Sekunden)...")
+    await client.start_notify(CHAR_UUID, handle_notification)
+    try:
+        await asyncio.wait_for(measurement_event.wait(), timeout=60)
+    except asyncio.TimeoutError:
+        print("⚠️  Kein Messwert empfangen (Timeout)")
+    await client.stop_notify(CHAR_UUID)
+    print("🛑 Messzyklus beendet")
 
 # Haupt-Async-Logik
 async def main():
-    async with BleakClient(DEVICE_ADDRESS) as client:
-        if client.is_connected:
-            print("✅ Verbunden mit Beurer BM64")
-        else:
-            print("❌ Verbindung fehlgeschlagen")
-            return
+    while True:
+        print("🔍 Suche nach Beurer BM64 ...")
+        device = await BleakScanner.find_device_by_address(DEVICE_ADDRESS, timeout=10.0)
+        if not device:
+            print("⌛ Gerät nicht gefunden, neuer Versuch in 5s")
+            await asyncio.sleep(5)
+            continue
 
-        print("📡 Warte auf Messdaten (60 Sekunden)...")
-        await client.start_notify(CHAR_UUID, handle_notification)
-        await asyncio.sleep(60)
-        await client.stop_notify(CHAR_UUID)
-        print("🛑 Fertig.")
+        try:
+            async with BleakClient(device) as client:
+                if client.is_connected:
+                    print("✅ Verbunden mit Beurer BM64")
+                    await log_once(client)
+                else:
+                    print("❌ Verbindung fehlgeschlagen")
+        except Exception as e:
+            print(f"❌ Verbindungsfehler: {e}")
+
+        print("⌛ Warte auf nächste Messung...")
+        await asyncio.sleep(5)
 
 # Einstiegspunkt
 if __name__ == "__main__":
