@@ -1,13 +1,28 @@
 import asyncio
-from bleak import BleakClient
-from datetime import datetime
+import json
 import os
+from datetime import datetime
+
+from bleak import BleakClient, BleakScanner
 from openpyxl import Workbook, load_workbook
 
 # Konfiguration
 DEVICE_ADDRESS = "A4:C1:38:A5:20:BB"  # <- anpassen, falls nötig
 CHAR_UUID = "00002a35-0000-1000-8000-00805f9b34fb"
 EXCEL_FILE = "log.xlsx"
+CONFIG_FILE = "config.json"
+
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"device_address": DEVICE_ADDRESS}
+
+
+def save_config(cfg):
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f)
 
 # Robuster Parser nach Bluetooth-Spezifikation
 def parse_measurement(data: bytes):
@@ -99,20 +114,105 @@ def handle_notification(sender, data):
     if values:
         write_to_excel(values)
 
-# Haupt-Async-Logik
-async def main():
-    async with BleakClient(DEVICE_ADDRESS) as client:
-        if client.is_connected:
-            print("✅ Verbunden mit Beurer BM64")
-        else:
-            print("❌ Verbindung fehlgeschlagen")
-            return
 
-        print("📡 Warte auf Messdaten (60 Sekunden)...")
+async def fetch_loop(address):
+    async with BleakClient(address) as client:
+        if not client.is_connected:
+            await client.connect()
+        print("✅ Verbunden mit Blutdruckmessgerät")
         await client.start_notify(CHAR_UUID, handle_notification)
-        await asyncio.sleep(60)
-        await client.stop_notify(CHAR_UUID)
-        print("🛑 Fertig.")
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            await client.stop_notify(CHAR_UUID)
+            print("⏹️ Fetching gestoppt")
+            raise
+
+
+async def pair_device(address: str) -> bool:
+    try:
+        async with BleakClient(address) as client:
+            if not client.is_connected:
+                await client.connect()
+            paired = await client.pair()
+            if paired:
+                print(f"✅ Gepaart mit {address}")
+            else:
+                print(f"❌ Pairing mit {address} fehlgeschlagen")
+            return paired
+    except Exception as e:
+        print(f"❌ Pairing-Fehler: {e}")
+        return False
+
+
+async def configure(cfg):
+    print("\n🔍 Suche Bluetooth-Geräte...")
+    devices = await BleakScanner.discover(timeout=5.0)
+    if not devices:
+        print("Keine Geräte gefunden")
+        return
+    for idx, d in enumerate(devices, 1):
+        name = d.name or "Unbekannt"
+        print(f"{idx}) {name} [{d.address}]")
+    choice = input("Gerät wählen (Nummer) oder Enter abbrechen: ").strip()
+    if not choice:
+        print("Abgebrochen")
+        return
+    if choice.isdigit():
+        i = int(choice) - 1
+        if 0 <= i < len(devices):
+            address = devices[i].address
+            print(f"🔗 Versuche Pairing mit {address} ...")
+            if await pair_device(address):
+                cfg["device_address"] = address
+                save_config(cfg)
+                print(f"Gerät {address} gespeichert")
+        else:
+            print("Ungültige Auswahl")
+    else:
+        print("Ungültige Auswahl")
+
+# Haupt-Async-Logik für interaktive Bedienung
+async def main():
+    cfg = load_config()
+    fetch_task = None
+
+    while True:
+        running = fetch_task is not None and not fetch_task.done()
+        status = "running" if running else "not run"
+        print(f"\nFetching ({status})")
+        print("1) Configuration")
+        print("2) Stop Fetching" if running else "2) Start Fetching")
+        print("3) Exit")
+        choice = input("> ").strip()
+
+        if choice == "1":
+            await configure(cfg)
+        elif choice == "2":
+            if running:
+                fetch_task.cancel()
+                try:
+                    await fetch_task
+                except asyncio.CancelledError:
+                    pass
+                fetch_task = None
+            else:
+                address = cfg.get("device_address")
+                if not address:
+                    print("Kein Gerät konfiguriert.")
+                else:
+                    fetch_task = asyncio.create_task(fetch_loop(address))
+        elif choice == "3":
+            if running:
+                fetch_task.cancel()
+                try:
+                    await fetch_task
+                except asyncio.CancelledError:
+                    pass
+            break
+        else:
+            print("Ungültige Eingabe")
 
 # Einstiegspunkt
 if __name__ == "__main__":
