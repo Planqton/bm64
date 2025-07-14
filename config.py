@@ -3,6 +3,7 @@ import json
 import os
 import sys
 
+from aiohttp import web
 from bleak import BleakClient, BleakScanner
 
 DATA_DIR = os.getenv("DATA_DIR", "/appdata")
@@ -22,7 +23,7 @@ def save_config(cfg):
         json.dump(cfg, f)
 
 
-def pair_with_bluetoothctl(address: str) -> bool:
+def pair_with_bluetoothctl(address: str, pin: str | None = None) -> bool:
     """Pairing via ``bluetoothctl`` unter Linux mit PIN-/Passkey-Abfrage."""
     try:
         import pexpect
@@ -44,7 +45,11 @@ def pair_with_bluetoothctl(address: str) -> bool:
                 pexpect.EOF, pexpect.TIMEOUT
             ], timeout=30)
             if idx == 0:
-                pin = input("PIN: ")
+                if pin is None:
+                    child.sendline("")
+                    child.sendline("quit")
+                    child.close()
+                    return False
                 child.sendline(pin)
             elif idx == 1:
                 child.sendline("yes")
@@ -61,9 +66,9 @@ def pair_with_bluetoothctl(address: str) -> bool:
         return False
 
 
-async def pair_device(address: str) -> bool:
+async def pair_device(address: str, pin: str | None = None) -> bool:
     if sys.platform.startswith("linux"):
-        return await asyncio.to_thread(pair_with_bluetoothctl, address)
+        return await asyncio.to_thread(pair_with_bluetoothctl, address, pin)
     try:
         async with BleakClient(address) as client:
             if not client.is_connected:
@@ -74,33 +79,64 @@ async def pair_device(address: str) -> bool:
         return False
 
 
-async def configure():
-    print("\n🔍 Suche Bluetooth-Geräte...")
+routes = web.RouteTableDef()
+
+
+@routes.get("/")
+async def index(request):
+    html = """
+    <h1>Bluetooth Konfiguration</h1>
+    <p><a href='/scan'>Geräte scannen</a></p>
+    """
+    return web.Response(text=html, content_type="text/html")
+
+
+@routes.get("/scan")
+async def scan(request):
     devices = await BleakScanner.discover(timeout=5.0)
-    if not devices:
-        print("Keine Geräte gefunden")
-        return
-    for idx, d in enumerate(devices, 1):
+    html = "<h1>Gefundene Geräte</h1><ul>"
+    for d in devices:
         name = d.name or "Unbekannt"
-        print(f"{idx}) {name} [{d.address}]")
-    try:
-        choice = input("Gerät wählen (Nummer) oder Enter abbrechen: ").strip()
-    except EOFError:
-        print()
-        return
-    if choice.isdigit():
-        i = int(choice) - 1
-        if 0 <= i < len(devices):
-            address = devices[i].address
-            print(f"🔗 Versuche Pairing mit {address} ...")
-            if await pair_device(address):
-                cfg = load_config()
-                cfg["device_address"] = address
-                save_config(cfg)
-                print(f"Gerät {address} gespeichert")
-        else:
-            print("Ungültige Auswahl")
+        html += f"<li>{name} [{d.address}] <a href='/pair?address={d.address}'>Pair</a></li>"
+    html += "</ul><p><a href='/'>Zurück</a></p>"
+    return web.Response(text=html, content_type="text/html")
+
+
+@routes.get("/pair")
+async def pair(request):
+    address = request.query.get("address")
+    if not address:
+        return web.Response(text="Adresse fehlt", status=400)
+
+    pin = request.query.get("pin")
+    success = await pair_device(address, pin)
+    if success:
+        cfg = load_config()
+        cfg["device_address"] = address
+        save_config(cfg)
+        html = f"<p>Gerät {address} gespeichert</p><p><a href='/'>Home</a></p>"
+        return web.Response(text=html, content_type="text/html")
+
+    if pin is None:
+        html = f"""
+        <h1>PIN für {address}</h1>
+        <form action='/pair' method='get'>
+            <input type='hidden' name='address' value='{address}'>
+            <label>PIN: <input name='pin'></label>
+            <button type='submit'>Senden</button>
+        </form>
+        """
+        return web.Response(text=html, content_type="text/html")
+
+    html = f"<p>Pairing mit {address} fehlgeschlagen</p><p><a href='/'>Home</a></p>"
+    return web.Response(text=html, content_type="text/html")
+
+
+def main():
+    app = web.Application()
+    app.add_routes(routes)
+    web.run_app(app, port=80)
 
 
 if __name__ == "__main__":
-    asyncio.run(configure())
+    main()

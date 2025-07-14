@@ -8,7 +8,7 @@ RUN apt-get update && \
 WORKDIR /app
 COPY . /app
 
-RUN pip install --no-cache-dir bleak openpyxl pexpect
+RUN pip install --no-cache-dir bleak openpyxl pexpect aiohttp
 
 # Verzeichnis für persistente Daten
 VOLUME ["/appdata"]
