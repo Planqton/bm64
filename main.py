@@ -233,7 +233,17 @@ async def main():
         print("1) Configuration")
         print("2) Stop Fetching" if running else "2) Start Fetching")
         print("3) Exit")
-        choice = input("> ").strip()
+        try:
+            choice = input("> ").strip()
+        except EOFError:
+            print("\nKeine Eingabe möglich, Programm wird beendet.")
+            if running:
+                fetch_task.cancel()
+                try:
+                    await fetch_task
+                except asyncio.CancelledError:
+                    pass
+            break
 
         if choice == "1":
             await configure(cfg)
