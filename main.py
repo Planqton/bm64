@@ -130,6 +130,22 @@ async def fetch_loop(address):
             raise
 
 
+async def pair_device(address: str) -> bool:
+    try:
+        async with BleakClient(address) as client:
+            if not client.is_connected:
+                await client.connect()
+            paired = await client.pair()
+            if paired:
+                print(f"✅ Gepaart mit {address}")
+            else:
+                print(f"❌ Pairing mit {address} fehlgeschlagen")
+            return paired
+    except Exception as e:
+        print(f"❌ Pairing-Fehler: {e}")
+        return False
+
+
 async def configure(cfg):
     print("\n🔍 Suche Bluetooth-Geräte...")
     devices = await BleakScanner.discover(timeout=5.0)
@@ -143,9 +159,12 @@ async def configure(cfg):
     if choice.isdigit():
         i = int(choice) - 1
         if 0 <= i < len(devices):
-            cfg["device_address"] = devices[i].address
-            save_config(cfg)
-            print(f"Gerät {devices[i].address} gespeichert")
+            address = devices[i].address
+            print(f"🔗 Versuche Pairing mit {address} ...")
+            if await pair_device(address):
+                cfg["device_address"] = address
+                save_config(cfg)
+                print(f"Gerät {address} gespeichert")
         else:
             print("Ungültige Auswahl")
 
