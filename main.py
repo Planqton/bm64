@@ -1,7 +1,8 @@
 import asyncio
-import json
 import os
 from datetime import datetime
+
+import config
 
 from bleak import BleakClient, BleakScanner
 from openpyxl import Workbook, load_workbook
@@ -10,19 +11,6 @@ from openpyxl import Workbook, load_workbook
 DEVICE_ADDRESS = "A4:C1:38:A5:20:BB"  # <- anpassen, falls nötig
 CHAR_UUID = "00002a35-0000-1000-8000-00805f9b34fb"
 EXCEL_FILE = "log.xlsx"
-CONFIG_FILE = "config.json"
-
-
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"device_address": DEVICE_ADDRESS}
-
-
-def save_config(cfg):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f)
 
 # Robuster Parser nach Bluetooth-Spezifikation
 def parse_measurement(data: bytes):
@@ -163,14 +151,14 @@ async def configure(cfg):
             print(f"🔗 Versuche Pairing mit {address} ...")
             if await pair_device(address):
                 cfg["device_address"] = address
-                save_config(cfg)
+                config.save_config(cfg)
                 print(f"Gerät {address} gespeichert")
         else:
             print("Ungültige Auswahl")
 
 # Haupt-Async-Logik für interaktive Bedienung
 async def main():
-    cfg = load_config()
+    cfg = config.load_config()
     fetch_task = None
 
     while True:

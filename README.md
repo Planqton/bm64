@@ -25,3 +25,11 @@ docker run -it --rm bp-fetcher
 
 Additional flags may be required to access Bluetooth hardware depending on your system
 (e.g. `--net=host --privileged`).
+
+## Pairing Script
+
+To search and pair with a Bluetooth device without starting the menu, run
+
+```bash
+python setup.py
+```
